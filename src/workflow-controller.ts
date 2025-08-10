@@ -48,4 +48,17 @@ export class BasicSaga {
     const context = await this.saga.execute({ userId: 789 });
     console.log("Final context:", context);
   }
+
+  async runWithGlobalCompensate() {
+    this.saga
+      .addStep(userStep)
+      .addStep(paymentStep)
+      .addStep(profileUpdateStep)
+      .addStep(auditLogStep)
+      .addGlobalCompensate(async (context) => {
+        console.log("Compensating for all steps");
+      });
+    const context = await this.saga.execute({ userId: 789 });
+    console.log("Final context:", context);
+  }
 }

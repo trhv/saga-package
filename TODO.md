@@ -6,7 +6,7 @@
 * [X] ~~*add ability to skip*~~ [2025-08-10]
 * [X] ~~*add ability to rerun*~~ [2025-08-10]
 * [ ] Logs should be very informative, and should be able to be used for debugging
-* [ ] Add ability to add global compensates
+* [X] ~~*Add ability to add global compensates*~~ [2025-08-10]
 * [ ] auditId should be added to the context
 * [ ] maybe add name to workflow, so will be able to distinguish between different workflows
 * [ ] maybe add saga manager, so will be able to r un multiple sagas in parallel
