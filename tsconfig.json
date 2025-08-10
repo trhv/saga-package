@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+      "target": "ES2019",                // Modern JS output
+      "module": "commonjs",              // Required for Node.js compatibility
+      "outDir": "dist",                  // Where to put compiled JS files
+      "rootDir": "src",                  // Source code location
+      "strict": true,                    // Enables all strict type-checking
+      "esModuleInterop": true,           // Allows default imports from CommonJS
+      "skipLibCheck": true,              // Faster, skips type checks for deps
+      "forceConsistentCasingInFileNames": true
+    },
+    "include": ["src/**/*"],
+    "exclude": ["node_modules", "dist"]
+  }
+  
