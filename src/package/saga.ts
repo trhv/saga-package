@@ -5,6 +5,7 @@ export type Step<TInput = SagaContext, TOutput = SagaContext> = {
   action: (context: TInput) => Promise<Partial<TOutput> | void>;
   compensate: (context: TInput) => Promise<void>;
   skip?: boolean;
+  maxReruns?: number;
 };
 
 // Helper type for creating strongly typed steps
@@ -37,6 +38,35 @@ export class Saga {
   private context: any = {};
   private lastCompensate: ((context: any) => Promise<void>) | undefined;
   private runId: string = "";
+
+  private async executeStepWithRetry(
+    step: Step<any, any>,
+    stepContext: any,
+    maxReruns: number = 0
+  ): Promise<any> {
+    let attempt = 0;
+    let lastError: Error | undefined;
+
+    while (attempt <= maxReruns) {
+      try {
+        if (attempt > 0) {
+          console.log(`[Saga ${this.runId}] Retrying step: ${step.name} (attempt ${attempt + 1}/${maxReruns + 1})`);
+        }
+        const result = await step.action(stepContext);
+        if (attempt > 0) {
+          console.log(`[Saga ${this.runId}] Step ${step.name} succeeded on retry attempt ${attempt + 1}`);
+        }
+        return result;
+      } catch (error) {
+        lastError = error as Error;
+        console.log(`[Saga ${this.runId}] Step ${step.name} failed on attempt ${attempt + 1}: ${lastError.message}`);
+        attempt++;
+      }
+    }
+
+    console.log(`[Saga ${this.runId}] Step ${step.name} failed after ${maxReruns + 1} attempts`);
+    throw lastError;
+  }
 
   addStep(step: SagaStep): Saga {
     this.steps.push(step);
@@ -71,6 +101,39 @@ export class Saga {
 
   getRunId(): string {
     return this.runId;
+  }
+
+  getStepReruns(stepName: string): number | undefined {
+    for (const step of this.steps) {
+      if (Array.isArray(step)) {
+        const foundStep = step.find(s => s.name === stepName);
+        if (foundStep) {
+          return foundStep.maxReruns;
+        }
+      } else {
+        if (step.name === stepName) {
+          return step.maxReruns;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  setStepReruns(stepName: string, maxReruns: number): Saga {
+    this.steps.forEach((step) => {
+      if (Array.isArray(step)) {
+        step.forEach((s) => {
+          if (s.name === stepName) {
+            s.maxReruns = maxReruns;
+          }
+        });
+      } else {
+        if (step.name === stepName) {
+          step.maxReruns = maxReruns;
+        }
+      }
+    });
+    return this;
   }
 
   skipStep(stepName: string): Saga {
@@ -140,7 +203,7 @@ export class Saga {
           const results = await Promise.all(
             activeSteps.map((s, index) => {
               console.log(`[Saga ${this.runId}] Running step: ${s.name}`);
-              return s.action(stepContexts[index]);
+              return this.executeStepWithRetry(s, stepContexts[index], s.maxReruns || 0);
             })
           );
           
@@ -162,7 +225,7 @@ export class Saga {
           }
           
           console.log(`[Saga ${this.runId}] Running step: ${step.name}`);
-          const result = await step.action(stepContext);
+          const result = await this.executeStepWithRetry(step, stepContext, step.maxReruns || 0);
           if (result && typeof result === "object")
             Object.assign(this.context, result);
           
