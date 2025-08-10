@@ -3,8 +3,8 @@
 * [ ] add retry with configuration on creation
 * [ ] add timeout with configuration on creation
 * [ ] pass logger to saga, if not provided, create a default logger
-* [ ] add ability to skip
-* [ ] add ability to rerun
+* [X] ~~*add ability to skip*~~ [2025-08-10]
+* [X] ~~*add ability to rerun*~~ [2025-08-10]
 * [ ] Logs should be very informative, and should be able to be used for debugging
 * [ ] Add ability to add global compensates
 * [ ] auditId should be added to the context
