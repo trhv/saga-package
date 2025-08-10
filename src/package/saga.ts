@@ -4,6 +4,7 @@ export type Step<TInput = SagaContext, TOutput = SagaContext> = {
   name: string;
   action: (context: TInput) => Promise<Partial<TOutput> | void>;
   compensate: (context: TInput) => Promise<void>;
+  skip?: boolean;
 };
 
 // Helper type for creating strongly typed steps
@@ -72,6 +73,40 @@ export class Saga {
     return this.runId;
   }
 
+  skipStep(stepName: string): Saga {
+    this.steps.forEach((step) => {
+      if (Array.isArray(step)) {
+        step.forEach((s) => {
+          if (s.name === stepName) {
+            s.skip = true;
+          }
+        });
+      } else {
+        if (step.name === stepName) {
+          step.skip = true;
+        }
+      }
+    });
+    return this;
+  }
+
+  unskipStep(stepName: string): Saga {
+    this.steps.forEach((step) => {
+      if (Array.isArray(step)) {
+        step.forEach((s) => {
+          if (s.name === stepName) {
+            s.skip = false;
+          }
+        });
+      } else {
+        if (step.name === stepName) {
+          step.skip = false;
+        }
+      }
+    });
+    return this;
+  }
+
   async execute(initialContext: any = {}): Promise<any> {
     // Generate a new GUID for this run
     this.runId = crypto.randomUUID();
@@ -84,13 +119,26 @@ export class Saga {
       
       try {
         if (Array.isArray(step)) {
-          // Parallel execution - each substep gets its own context copy
-          const stepNames = step.map(s => s.name).join(', ');
-          console.log(`[Saga ${this.runId}] Executing parallel steps: ${stepNames}`);
+          // Parallel execution - filter out skipped steps
+          const activeSteps = step.filter(s => !s.skip);
           
-          const stepContexts = step.map(() => ({ ...this.context }));
+          if (activeSteps.length === 0) {
+            const stepNames = step.map(s => s.name).join(', ');
+            console.log(`[Saga ${this.runId}] Skipping all parallel steps: ${stepNames}`);
+            continue;
+          }
+          
+          const activeStepNames = activeSteps.map(s => s.name).join(', ');
+          const skippedStepNames = step.filter(s => s.skip).map(s => s.name);
+          
+          if (skippedStepNames.length > 0) {
+            console.log(`[Saga ${this.runId}] Skipping parallel steps: ${skippedStepNames.join(', ')}`);
+          }
+          console.log(`[Saga ${this.runId}] Executing parallel steps: ${activeStepNames}`);
+          
+          const stepContexts = activeSteps.map(() => ({ ...this.context }));
           const results = await Promise.all(
-            step.map((s, index) => {
+            activeSteps.map((s, index) => {
               console.log(`[Saga ${this.runId}] Running step: ${s.name}`);
               return s.action(stepContexts[index]);
             })
@@ -102,10 +150,17 @@ export class Saga {
               Object.assign(this.context, result);
           });
           
-          // Store step execution with all contexts used by parallel steps
-          this.completedSteps.push({ step, context: stepContexts });
+          // Store step execution with contexts - only for executed steps
+          if (activeSteps.length > 0) {
+            this.completedSteps.push({ step: activeSteps, context: stepContexts });
+          }
         } else {
-          // Sequential execution
+          // Sequential execution - check if step should be skipped
+          if (step.skip) {
+            console.log(`[Saga ${this.runId}] Skipping step: ${step.name}`);
+            continue;
+          }
+          
           console.log(`[Saga ${this.runId}] Running step: ${step.name}`);
           const result = await step.action(stepContext);
           if (result && typeof result === "object")
