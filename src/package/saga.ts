@@ -27,6 +27,9 @@ export function createTypedStep<TInput, TOutput>(
 // Allow a "Step" or "Step[]" with any context types
 export type SagaStep = Step<any, any> | Step<any, any>[];
 
+// Export the WorkflowManager from the same module for convenience
+export { WorkflowManager, type WorkflowDefinition, type WorkflowExecutionResult } from './workflow-manager';
+
 type StepExecution = {
   step: SagaStep;
   context: any | any[]; // Array for parallel steps, single for sequential
@@ -38,6 +41,7 @@ export class Saga {
   private context: any = {};
   private lastCompensate: ((context: any) => Promise<void>) | undefined;
   private runId: string = "";
+  private workflowName: string = "";
 
   private async executeStepWithRetry(
     step: Step<any, any>,
@@ -49,22 +53,25 @@ export class Saga {
 
     while (attempt <= maxReruns) {
       try {
+        const workflowDisplay = this.workflowName ? `${this.workflowName} (${this.runId})` : this.runId;
         if (attempt > 0) {
-          console.log(`[Saga ${this.runId}] Retrying step: ${step.name} (attempt ${attempt + 1}/${maxReruns + 1})`);
+          console.log(`[Saga ${workflowDisplay}] Retrying step: ${step.name} (attempt ${attempt + 1}/${maxReruns + 1})`);
         }
         const result = await step.action(stepContext);
         if (attempt > 0) {
-          console.log(`[Saga ${this.runId}] Step ${step.name} succeeded on retry attempt ${attempt + 1}`);
+          console.log(`[Saga ${workflowDisplay}] Step ${step.name} succeeded on retry attempt ${attempt + 1}`);
         }
         return result;
       } catch (error) {
         lastError = error as Error;
-        console.log(`[Saga ${this.runId}] Step ${step.name} failed on attempt ${attempt + 1}: ${lastError.message}`);
+        const workflowDisplay = this.workflowName ? `${this.workflowName} (${this.runId})` : this.runId;
+        console.log(`[Saga ${workflowDisplay}] Step ${step.name} failed on attempt ${attempt + 1}: ${lastError.message}`);
         attempt++;
       }
     }
 
-    console.log(`[Saga ${this.runId}] Step ${step.name} failed after ${maxReruns + 1} attempts`);
+    const workflowDisplay = this.workflowName ? `${this.workflowName} (${this.runId})` : this.runId;
+    console.log(`[Saga ${workflowDisplay}] Step ${step.name} failed after ${maxReruns + 1} attempts`);
     throw lastError;
   }
 
@@ -101,6 +108,32 @@ export class Saga {
 
   getRunId(): string {
     return this.runId;
+  }
+
+  setWorkflowName(name: string): Saga {
+    this.workflowName = name;
+    return this;
+  }
+
+  getWorkflowName(): string {
+    return this.workflowName;
+  }
+
+  // Clone the saga for rerunning - creates a new instance with same steps and configuration
+  clone(): Saga {
+    const clonedSaga = new Saga();
+    clonedSaga.steps = [...this.steps]; // Shallow copy of steps array
+    clonedSaga.workflowName = this.workflowName;
+    clonedSaga.lastCompensate = this.lastCompensate;
+    return clonedSaga;
+  }
+
+  // Reset the saga state for rerunning (clears execution state but keeps configuration)
+  reset(): Saga {
+    this.completedSteps = [];
+    this.context = {};
+    this.runId = "";
+    return this;
   }
 
   getStepReruns(stepName: string): number | undefined {
@@ -173,12 +206,14 @@ export class Saga {
   async execute(initialContext: any = {}): Promise<any> {
     // Generate a new GUID for this run
     this.runId = crypto.randomUUID();
-    console.log(`[Saga ${this.runId}] Starting saga execution`);
+    const workflowDisplay = this.workflowName ? `${this.workflowName} (${this.runId})` : this.runId;
+    console.log(`[Saga ${workflowDisplay}] Starting saga execution`);
     
     this.context = { ...initialContext };
     for (const step of this.steps) {
       // Create a separate context for this step (copy of current global context)
       const stepContext = { ...this.context };
+      const workflowDisplay = this.workflowName ? `${this.workflowName} (${this.runId})` : this.runId;
       
       try {
         if (Array.isArray(step)) {
@@ -187,7 +222,7 @@ export class Saga {
           
           if (activeSteps.length === 0) {
             const stepNames = step.map(s => s.name).join(', ');
-            console.log(`[Saga ${this.runId}] Skipping all parallel steps: ${stepNames}`);
+            console.log(`[Saga ${workflowDisplay}] Skipping all parallel steps: ${stepNames}`);
             continue;
           }
           
@@ -195,14 +230,14 @@ export class Saga {
           const skippedStepNames = step.filter(s => s.skip).map(s => s.name);
           
           if (skippedStepNames.length > 0) {
-            console.log(`[Saga ${this.runId}] Skipping parallel steps: ${skippedStepNames.join(', ')}`);
+            console.log(`[Saga ${workflowDisplay}] Skipping parallel steps: ${skippedStepNames.join(', ')}`);
           }
-          console.log(`[Saga ${this.runId}] Executing parallel steps: ${activeStepNames}`);
+          console.log(`[Saga ${workflowDisplay}] Executing parallel steps: ${activeStepNames}`);
           
           const stepContexts = activeSteps.map(() => ({ ...this.context }));
           const results = await Promise.all(
             activeSteps.map((s, index) => {
-              console.log(`[Saga ${this.runId}] Running step: ${s.name}`);
+              console.log(`[Saga ${workflowDisplay}] Running step: ${s.name}`);
               return this.executeStepWithRetry(s, stepContexts[index], s.maxReruns || 0);
             })
           );
@@ -220,11 +255,11 @@ export class Saga {
         } else {
           // Sequential execution - check if step should be skipped
           if (step.skip) {
-            console.log(`[Saga ${this.runId}] Skipping step: ${step.name}`);
+            console.log(`[Saga ${workflowDisplay}] Skipping step: ${step.name}`);
             continue;
           }
           
-          console.log(`[Saga ${this.runId}] Running step: ${step.name}`);
+          console.log(`[Saga ${workflowDisplay}] Running step: ${step.name}`);
           const result = await this.executeStepWithRetry(step, stepContext, step.maxReruns || 0);
           if (result && typeof result === "object")
             Object.assign(this.context, result);
@@ -233,43 +268,44 @@ export class Saga {
           this.completedSteps.push({ step, context: stepContext });
         }
       } catch (error) {
-        console.log(`[Saga ${this.runId}] Error occurred, starting compensation`);
+        console.log(`[Saga ${workflowDisplay}] Error occurred, starting compensation`);
         await this.compensate();
         throw error;
       }
     }
-    console.log(`[Saga ${this.runId}] Saga execution completed successfully`);
+    console.log(`[Saga ${workflowDisplay}] Saga execution completed successfully`);
     return this.context;
   }
 
   private async compensate() {
     // Compensate in reverse order, handling groups
-    console.log(`[Saga ${this.runId}] Starting compensation`);
+    const workflowDisplay = this.workflowName ? `${this.workflowName} (${this.runId})` : this.runId;
+    console.log(`[Saga ${workflowDisplay}] Starting compensation`);
     try {
       for (const stepExecution of this.completedSteps.reverse()) {
         if (Array.isArray(stepExecution.step)) {
           // For parallel steps, compensate each substep with its own context
           const stepNames = stepExecution.step.map(s => s.name).join(', ');
-          console.log(`[Saga ${this.runId}] Compensating parallel steps: ${stepNames}`);
+          console.log(`[Saga ${workflowDisplay}] Compensating parallel steps: ${stepNames}`);
           const contexts = stepExecution.context as any[];
           await Promise.all(stepExecution.step.map((s, index) => {
-            console.log(`[Saga ${this.runId}] Compensating step: ${s.name}`);
+            console.log(`[Saga ${workflowDisplay}] Compensating step: ${s.name}`);
             return s.compensate(contexts[index]);
           }));
         } else {
           // For sequential steps, compensate using their specific context
-          console.log(`[Saga ${this.runId}] Compensating step: ${stepExecution.step.name}`);
+          console.log(`[Saga ${workflowDisplay}] Compensating step: ${stepExecution.step.name}`);
           await stepExecution.step.compensate(stepExecution.context as any);
         }
       }
     } catch (error) {
-      console.error(`[Saga ${this.runId}] Failed in compensate:`, error);
+      console.error(`[Saga ${workflowDisplay}] Failed in compensate:`, error);
     } finally {
       if (this.lastCompensate) {
-        console.log(`[Saga ${this.runId}] Running global compensation`);
+        console.log(`[Saga ${workflowDisplay}] Running global compensation`);
         await this.lastCompensate(this.context);
       }
-      console.log(`[Saga ${this.runId}] Compensation completed`);
+      console.log(`[Saga ${workflowDisplay}] Compensation completed`);
     }
   }
 }

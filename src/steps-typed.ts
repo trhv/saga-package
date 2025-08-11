@@ -115,14 +115,14 @@ export const auditLogStep = createTypedStep<
   }) => {
     await delay(50);
     console.log("Action Audit Log Step, context:", context);
-    // console.log(
-    //   `Creating audit log for completed transaction - User: ${
-    //     context.username
-    //   }, Payment: ${context.paymentId}, Timestamp: ${new Date(
-    //     context.timestamp
-    //   ).toISOString()}`
-    // );
-    throw new Error("");
+    console.log(
+      `Creating audit log for completed transaction - User: ${
+        context.username
+      }, Payment: ${context.paymentId}, Timestamp: ${new Date(
+        context.timestamp
+      ).toISOString()}`
+    );
+    // throw new Error("");
     return { auditId: "audit789" };
   },
   compensate: async (context: { username: any }) => {
