@@ -30,6 +30,16 @@ export type SagaStep = Step<any, any> | Step<any, any>[];
 // Export the WorkflowManager from the same module for convenience
 export { WorkflowManager, type WorkflowDefinition, type WorkflowExecutionResult } from './workflow-manager';
 
+// Export state management components
+export { 
+  StateRepository, 
+  InMemoryStateRepository, 
+  type WorkflowState, 
+  type StepState 
+} from './state-repository';
+
+import { StateRepository, WorkflowState, StepState } from './state-repository';
+
 type StepExecution = {
   step: SagaStep;
   context: any | any[]; // Array for parallel steps, single for sequential
@@ -42,6 +52,7 @@ export class Saga {
   private lastCompensate: ((context: any) => Promise<void>) | undefined;
   private runId: string = "";
   private workflowName: string = "";
+  private stateRepository?: StateRepository;
 
   private async executeStepWithRetry(
     step: Step<any, any>,
@@ -57,21 +68,78 @@ export class Saga {
         if (attempt > 0) {
           console.log(`[Saga ${workflowDisplay}] Retrying step: ${step.name} (attempt ${attempt + 1}/${maxReruns + 1})`);
         }
+        // Persist attempt start
+        if (this.stateRepository) {
+          try {
+            const existing = await this.stateRepository.getStepState(this.runId, step.name);
+            if (!existing) {
+              await this.stateRepository.saveStepState(this.runId, {
+                stepName: step.name,
+                status: 'running',
+                context: stepContext,
+                attempt,
+                maxAttempts: (maxReruns || 0) + 1,
+                startedAt: new Date()
+              });
+            } else {
+              await this.stateRepository.updateStepState(this.runId, step.name, {
+                status: 'running',
+                attempt,
+                startedAt: existing.startedAt ?? new Date()
+              });
+            }
+          } catch (persistErr) {
+            console.error('[Saga] Failed persisting step attempt start', persistErr);
+          }
+        }
         const result = await step.action(stepContext);
         if (attempt > 0) {
           console.log(`[Saga ${workflowDisplay}] Step ${step.name} succeeded on retry attempt ${attempt + 1}`);
+        }
+        if (this.stateRepository) {
+          try {
+            await this.stateRepository.updateStepState(this.runId, step.name, {
+              status: 'completed',
+              result,
+              completedAt: new Date()
+            });
+            await this.stateRepository.updateWorkflowState(this.runId, {
+              currentContext: this.context
+            });
+          } catch (persistErr) {
+            console.error('[Saga] Failed persisting step success', persistErr);
+          }
         }
         return result;
       } catch (error) {
         lastError = error as Error;
         const workflowDisplay = this.workflowName ? `${this.workflowName} (${this.runId})` : this.runId;
         console.log(`[Saga ${workflowDisplay}] Step ${step.name} failed on attempt ${attempt + 1}: ${lastError.message}`);
+        if (this.stateRepository) {
+          try {
+            await this.stateRepository.updateStepState(this.runId, step.name, {
+              error: lastError.message
+            });
+          } catch (persistErr) {
+            console.error('[Saga] Failed persisting step failure', persistErr);
+          }
+        }
         attempt++;
       }
     }
 
     const workflowDisplay = this.workflowName ? `${this.workflowName} (${this.runId})` : this.runId;
     console.log(`[Saga ${workflowDisplay}] Step ${step.name} failed after ${maxReruns + 1} attempts`);
+    if (this.stateRepository) {
+      try {
+        await this.stateRepository.updateStepState(this.runId, step.name, {
+          status: 'failed',
+          completedAt: new Date()
+        });
+      } catch (persistErr) {
+        console.error('[Saga] Failed persisting final step failure', persistErr);
+      }
+    }
     throw lastError;
   }
 
@@ -119,12 +187,22 @@ export class Saga {
     return this.workflowName;
   }
 
+  setStateRepository(repository: StateRepository): Saga {
+    this.stateRepository = repository;
+    return this;
+  }
+
+  getStateRepository(): StateRepository | undefined {
+    return this.stateRepository;
+  }
+
   // Clone the saga for rerunning - creates a new instance with same steps and configuration
   clone(): Saga {
     const clonedSaga = new Saga();
     clonedSaga.steps = [...this.steps]; // Shallow copy of steps array
     clonedSaga.workflowName = this.workflowName;
     clonedSaga.lastCompensate = this.lastCompensate;
+    clonedSaga.stateRepository = this.stateRepository;
     return clonedSaga;
   }
 
@@ -210,6 +288,23 @@ export class Saga {
     console.log(`[Saga ${workflowDisplay}] Starting saga execution`);
     
     this.context = { ...initialContext };
+    // Persist initial workflow state
+    if (this.stateRepository) {
+      const workflowState: WorkflowState = {
+        workflowName: this.workflowName || 'unnamed-workflow',
+        runId: this.runId,
+        status: 'running',
+        initialContext: { ...initialContext },
+        currentContext: { ...this.context },
+        steps: [],
+        startedAt: new Date()
+      };
+      try {
+        await this.stateRepository.saveWorkflowState(workflowState);
+      } catch (persistErr) {
+        console.error('[Saga] Failed persisting initial workflow state', persistErr);
+      }
+    }
     for (const step of this.steps) {
       // Create a separate context for this step (copy of current global context)
       const stepContext = { ...this.context };
@@ -235,6 +330,21 @@ export class Saga {
           console.log(`[Saga ${workflowDisplay}] Executing parallel steps: ${activeStepNames}`);
           
           const stepContexts = activeSteps.map(() => ({ ...this.context }));
+          // Persist initial step states for parallel steps
+          if (this.stateRepository) {
+            try {
+              await Promise.all(activeSteps.map((s, index) => this.stateRepository!.saveStepState(this.runId, {
+                stepName: s.name,
+                status: 'running',
+                context: stepContexts[index],
+                attempt: 0,
+                maxAttempts: (s.maxReruns || 0) + 1,
+                startedAt: new Date()
+              })));
+            } catch (persistErr) {
+              console.error('[Saga] Failed persisting initial parallel step states', persistErr);
+            }
+          }
           const results = await Promise.all(
             activeSteps.map((s, index) => {
               console.log(`[Saga ${workflowDisplay}] Running step: ${s.name}`);
@@ -247,6 +357,15 @@ export class Saga {
             if (result && typeof result === "object")
               Object.assign(this.context, result);
           });
+          if (this.stateRepository) {
+            try {
+              await this.stateRepository.updateWorkflowState(this.runId, {
+                currentContext: this.context
+              });
+            } catch (persistErr) {
+              console.error('[Saga] Failed persisting workflow context after parallel steps', persistErr);
+            }
+          }
           
           // Store step execution with contexts - only for executed steps
           if (activeSteps.length > 0) {
@@ -260,20 +379,75 @@ export class Saga {
           }
           
           console.log(`[Saga ${workflowDisplay}] Running step: ${step.name}`);
+          // Persist initial step state for sequential step
+          if (this.stateRepository) {
+            try {
+              await this.stateRepository.saveStepState(this.runId, {
+                stepName: step.name,
+                status: 'running',
+                context: stepContext,
+                attempt: 0,
+                maxAttempts: (step.maxReruns || 0) + 1,
+                startedAt: new Date()
+              });
+            } catch (persistErr) {
+              console.error('[Saga] Failed persisting initial step state', persistErr);
+            }
+          }
           const result = await this.executeStepWithRetry(step, stepContext, step.maxReruns || 0);
           if (result && typeof result === "object")
             Object.assign(this.context, result);
           
           // Store step execution with its specific context
           this.completedSteps.push({ step, context: stepContext });
+          if (this.stateRepository) {
+            try {
+              await this.stateRepository.updateWorkflowState(this.runId, {
+                currentContext: this.context
+              });
+            } catch (persistErr) {
+              console.error('[Saga] Failed persisting workflow context after sequential step', persistErr);
+            }
+          }
         }
       } catch (error) {
         console.log(`[Saga ${workflowDisplay}] Error occurred, starting compensation`);
+        if (this.stateRepository) {
+          try {
+            await this.stateRepository.updateWorkflowState(this.runId, {
+              status: 'compensating',
+              error: (error as Error)?.message
+            });
+          } catch (persistErr) {
+            console.error('[Saga] Failed persisting compensating state', persistErr);
+          }
+        }
         await this.compensate();
+        if (this.stateRepository) {
+          try {
+            await this.stateRepository.updateWorkflowState(this.runId, {
+              status: 'compensated',
+              completedAt: new Date()
+            });
+          } catch (persistErr) {
+            console.error('[Saga] Failed persisting compensated state', persistErr);
+          }
+        }
         throw error;
       }
     }
     console.log(`[Saga ${workflowDisplay}] Saga execution completed successfully`);
+    if (this.stateRepository) {
+      try {
+        await this.stateRepository.updateWorkflowState(this.runId, {
+          status: 'completed',
+          currentContext: this.context,
+          completedAt: new Date()
+        });
+      } catch (persistErr) {
+        console.error('[Saga] Failed persisting completed workflow state', persistErr);
+      }
+    }
     return this.context;
   }
 
@@ -292,10 +466,30 @@ export class Saga {
             console.log(`[Saga ${workflowDisplay}] Compensating step: ${s.name}`);
             return s.compensate(contexts[index]);
           }));
+          if (this.stateRepository) {
+            try {
+              await Promise.all(stepExecution.step.map((s) => this.stateRepository!.updateStepState(this.runId, s.name, {
+                status: 'compensated',
+                completedAt: new Date()
+              })));
+            } catch (persistErr) {
+              console.error('[Saga] Failed persisting compensated parallel steps', persistErr);
+            }
+          }
         } else {
           // For sequential steps, compensate using their specific context
           console.log(`[Saga ${workflowDisplay}] Compensating step: ${stepExecution.step.name}`);
           await stepExecution.step.compensate(stepExecution.context as any);
+          if (this.stateRepository) {
+            try {
+              await this.stateRepository.updateStepState(this.runId, stepExecution.step.name, {
+                status: 'compensated',
+                completedAt: new Date()
+              });
+            } catch (persistErr) {
+              console.error('[Saga] Failed persisting compensated step', persistErr);
+            }
+          }
         }
       }
     } catch (error) {

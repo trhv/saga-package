@@ -1,4 +1,5 @@
 import { Saga, WorkflowManager } from "./package/saga";
+import { InMemoryStateRepository } from "./package/state-repository";
 import {
   userStep,
   paymentStep,
@@ -12,7 +13,9 @@ export class BasicSaga {
 
   constructor() {
     this.saga = new Saga();
-    this.workflowManager = new WorkflowManager();
+    const stateRepo = new InMemoryStateRepository();
+    this.saga.setStateRepository(stateRepo);
+    this.workflowManager = new WorkflowManager({ stateRepository: stateRepo });
     this.setupNamedWorkflows();
   }
 

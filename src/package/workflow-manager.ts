@@ -1,4 +1,5 @@
 import { Saga } from "./saga";
+import { StateRepository } from "./state-repository";
 
 export type WorkflowExecutionResult = {
   workflowName: string;
@@ -19,6 +20,11 @@ export type WorkflowDefinition = {
 
 export class WorkflowManager {
   private workflows: Map<string, WorkflowDefinition> = new Map();
+  private stateRepository?: StateRepository;
+
+  constructor(options?: { stateRepository?: StateRepository }) {
+    this.stateRepository = options?.stateRepository;
+  }
 
   // Register a named workflow
   registerWorkflow(name: string, saga: Saga): WorkflowManager {
@@ -27,6 +33,9 @@ export class WorkflowManager {
     }
 
     saga.setWorkflowName(name);
+    if (this.stateRepository) {
+      saga.setStateRepository(this.stateRepository);
+    }
     const definition: WorkflowDefinition = {
       name,
       saga: saga.clone(), // Store a clean copy
@@ -46,6 +55,9 @@ export class WorkflowManager {
 
     const definition = this.workflows.get(name)!;
     saga.setWorkflowName(name);
+    if (this.stateRepository) {
+      saga.setStateRepository(this.stateRepository);
+    }
     definition.saga = saga.clone(); // Replace with new clean copy
     this.workflows.set(name, definition);
     return this;
@@ -60,6 +72,9 @@ export class WorkflowManager {
 
     // Clone the saga to avoid modifying the stored definition
     const sagaInstance = definition.saga.clone();
+    if (this.stateRepository) {
+      sagaInstance.setStateRepository(this.stateRepository);
+    }
     const startTime = new Date();
 
     let result: WorkflowExecutionResult;
