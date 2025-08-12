@@ -80,7 +80,7 @@ export class Saga {
     return this;
   }
 
-  removeStep(stepName: string): Saga {
+  private removeStep(stepName: string): Saga {
     this.steps = this.steps
       .map((step) => {
         if (Array.isArray(step)) {
@@ -96,31 +96,31 @@ export class Saga {
     return this;
   }
 
-  addGlobalCompensate(compensate: (context: any) => Promise<void>): Saga {
+  private addGlobalCompensate(compensate: (context: any) => Promise<void>): Saga {
     this.lastCompensate = compensate;
     return this;
   }
 
-  insertStepAt(step: SagaStep, index: number): Saga {
+  private insertStepAt(step: SagaStep, index: number): Saga {
     this.steps.splice(index, 0, step);
     return this;
   }
 
-  getRunId(): string {
+  private getRunId(): string {
     return this.runId;
   }
 
-  setWorkflowName(name: string): Saga {
+  private setWorkflowName(name: string): Saga {
     this.workflowName = name;
     return this;
   }
 
-  getWorkflowName(): string {
+  private getWorkflowName(): string {
     return this.workflowName;
   }
 
   // Clone the saga for rerunning - creates a new instance with same steps and configuration
-  clone(): Saga {
+  private clone(): Saga {
     const clonedSaga = new Saga();
     clonedSaga.steps = [...this.steps]; // Shallow copy of steps array
     clonedSaga.workflowName = this.workflowName;
@@ -129,14 +129,14 @@ export class Saga {
   }
 
   // Reset the saga state for rerunning (clears execution state but keeps configuration)
-  reset(): Saga {
+  private reset(): Saga {
     this.completedSteps = [];
     this.context = {};
     this.runId = "";
     return this;
   }
 
-  getStepReruns(stepName: string): number | undefined {
+  private getStepReruns(stepName: string): number | undefined {
     for (const step of this.steps) {
       if (Array.isArray(step)) {
         const foundStep = step.find(s => s.name === stepName);
@@ -152,7 +152,7 @@ export class Saga {
     return undefined;
   }
 
-  setStepReruns(stepName: string, maxReruns: number): Saga {
+  private setStepReruns(stepName: string, maxReruns: number): Saga {
     this.steps.forEach((step) => {
       if (Array.isArray(step)) {
         step.forEach((s) => {
@@ -169,7 +169,7 @@ export class Saga {
     return this;
   }
 
-  skipStep(stepName: string): Saga {
+  privateskipStep(stepName: string): Saga {
     this.steps.forEach((step) => {
       if (Array.isArray(step)) {
         step.forEach((s) => {
@@ -186,7 +186,7 @@ export class Saga {
     return this;
   }
 
-  unskipStep(stepName: string): Saga {
+  private unskipStep(stepName: string): Saga {
     this.steps.forEach((step) => {
       if (Array.isArray(step)) {
         step.forEach((s) => {
